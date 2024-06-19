@@ -84,8 +84,19 @@ func (node *Node) dispatchMsg() {
 
 func (node *Node) routeMsg(msg interface{}) []error {
 	// make different branch depends on type of msg
-	switch msg {
+	switch msg.(type) { // interface{} . type
 	case ReqMsg:
+		if node.CurrentState == nil {
+			// new a reqmsgs
+			reqMsgs := make([]*ReqMsg, len(node.MsgBuffer.ReqMsgs))
+			copy(reqMsgs, node.MsgBuffer.ReqMsgs)
+			reqMsgs = append(reqMsgs, msg.(*ReqMsg))
+			// clear node reqMsgs pool
+			node.MsgBuffer.ReqMsgs = make([]*ReqMsg, 0)
+			// into channel
+			node.MsgDelivery <- reqMsgs
+		} else {
 
+		}
 	}
 }
