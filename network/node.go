@@ -1,11 +1,22 @@
 package network
 
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"pbft-pra/utils"
+	"time"
+)
+
 type Node struct {
 	NodeId       string
 	NodeTable    map[string]string
 	CurrentState *State
 	View         *View
 	MsgBuffer    *MsgBuffer
+	CommitedMsgs []*CommitedMsg
 	// define three channels
 	MsgEntrance chan interface{} // general chan can transfer any type data
 	MsgDelivery chan interface{}
@@ -15,6 +26,7 @@ type Node struct {
 type INode interface {
 	NewNode(string) *Node
 	dispatchMsg()
+	routeMsg(interface{}) error
 	alarmToDispatcher()
 	resolveMsg()
 }
@@ -53,6 +65,7 @@ func NewNode(Id string) *Node {
 			make([]*CommitedMsg, 0),
 			make([]*ReplyMsg, 0),
 		},
+		make([]*CommitedMsg, 0),
 		// channels
 		make(chan interface{}),
 		make(chan interface{}),
@@ -110,6 +123,7 @@ func (node *Node) routeMsg(msg interface{}) error {
 			// if state is still nil or not in preprepared
 			node.MsgBuffer.PreparedMsgs = append(node.MsgBuffer.PreparedMsgs, msg.(*PreparedMsg))
 		} else {
+			// if preprepared is done , do prepared
 			preparedMsgs := node.appendPreMsgs(msg)
 			node.clearMsgsBuffer(msg)
 			node.MsgDelivery <- preparedMsgs
@@ -118,7 +132,7 @@ func (node *Node) routeMsg(msg interface{}) error {
 		if node.CurrentState == nil || node.CurrentState.State != prepared {
 			node.MsgBuffer.CommitedMsgs = append(node.MsgBuffer.CommitedMsgs, msg.(*CommitedMsg))
 		} else {
-			// commit
+			// if prepared is done ,commit
 			CommittedMsgs := node.appendCommitedMsgs(msg)
 			node.clearMsgsBuffer(msg)
 			node.MsgDelivery <- CommittedMsgs
@@ -127,9 +141,156 @@ func (node *Node) routeMsg(msg interface{}) error {
 	return nil
 }
 
-func (node *Node) clearMsgsBuffer(msgs interface{}) {
+// this is a protect thread , continuing send alarm to true
+func (node *Node) alarmToDispatcher() {
+	for {
+		time.Sleep(utils.TimeDuration)
+		node.Alarm <- true
+	}
+}
+
+func (node *Node) resolveMsg() {
+	errs := make([]error, 0)
+	for {
+		msgs := <-node.MsgDelivery
+		switch msgs.(type) {
+		case []*ReqMsg:
+			errs = node.resolveRequestMsg(msgs.([]*ReqMsg))
+			if errs != nil {
+				for err := range errs {
+					fmt.Println(err)
+				}
+			}
+		case []*PrepreparedMsg:
+			errs = node.resolvePreprepareMsg(msgs.([]*PrepreparedMsg))
+			if errs != nil {
+				for err := range errs {
+					fmt.Println(err)
+				}
+			}
+		}
+	}
+}
+
+func (node *Node) resolvePreprepareMsg(msgs []*PrepreparedMsg) []error {
+	errs := make([]error, 0)
+
+	for _, msg := range msgs {
+		err := node.GetPrepre(msg)
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if errs != nil {
+		return errs
+	}
+	return nil
+}
+
+func (node *Node) GetPrepre(msg *PrepreparedMsg) error {
+	LogMsg(msg) // print log
+	err := node.createNewState()
+	if err != nil {
+		return err
+	}
+	// generate next
+	preparedMsg, err := node.CurrentState.Preprepared(msg)
+	if err != nil {
+		return err
+	}
+
+	if preparedMsg != nil {
+		preparedMsg.NodeId = node.NodeId
+	}
+}
+
+func (node *Node) Preprepared(msg *PrepreparedMsg) error {
+
+}
+
+func (node *Node) resolveRequestMsg(msgs []*ReqMsg) []error {
+	errs := make([]error, 0)
+	for _, msg := range msgs {
+		// generate the preprepared msg and broadcast
+		err := node.GetReq(msg)
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if errs != nil {
+		return errs
+	}
+	return nil
+}
+
+// client send req ->
+func (node *Node) GetReq(msg *ReqMsg) error {
+	// consensus cope
+	err := node.createNewState()
+	if err != nil {
+		return err
+	}
+	// begin to consensus
+	PrepreparedMsg, err := node.CurrentState.StartConsensus(msg)
+	if err != nil {
+		return err
+	}
+	if PrepreparedMsg != nil {
+		node.Boardcast(PrepreparedMsg, "/preprepared")
+	}
+	return nil
+}
+
+func (node *Node) createNewState() error {
+	if node.CurrentState != nil {
+		return errors.New("current consensus is not over")
+	}
+	var lastSeq int64
+	if len(node.MsgBuffer.CommitedMsgs) == 0 {
+		lastSeq = -1
+	} else {
+		lastSeq = node.MsgBuffer.CommitedMsgs[len(node.MsgBuffer.CommitedMsgs)-1].SequenceId
+	}
+
+	// create a new round consensus
+	node.CurrentState = NewState(node.View.ViewId, lastSeq)
+
+	return nil
+}
+
+func (node *Node) Boardcast(msg interface{}, path string) map[string]error {
+	errorMap := make(map[string]error)
+
+	for nodeId, url := range node.NodeTable {
+		// avoid self
+		if node.NodeId == node.NodeId {
+			continue
+		}
+
+		jsonMsg, err := json.Marshal(msg) // to json
+		if err != nil {
+			errorMap[nodeId] = err
+			continue
+		}
+
+		send(url+path, jsonMsg)
+
+		if len(errorMap) == 0 {
+			return nil
+		} else {
+			return errorMap
+		}
+	}
+}
+
+func send(url string, msg []byte) {
+	buffer := bytes.NewBuffer(msg)
+	http.Post("http://"+url, "application/json", buffer)
+}
+
+func (node *Node) clearMsgsBuffer(msg interface{}) {
 	// node.MsgBuffer.msg.(type) = make([]*msg.(type),0)
-	switch msgs.(type) {
+	switch msg.(type) {
 	case *ReqMsg:
 		node.MsgBuffer.ReqMsgs = make([]*ReqMsg, 0)
 	case *PrepreparedMsg:
