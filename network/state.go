@@ -1,7 +1,7 @@
 package network
 
 type State struct {
-	currentState Stage
+	State Stage
 }
 
 type Stage int

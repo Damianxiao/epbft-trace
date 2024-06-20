@@ -82,21 +82,91 @@ func (node *Node) dispatchMsg() {
 	}
 }
 
-func (node *Node) routeMsg(msg interface{}) []error {
+func (node *Node) routeMsg(msg interface{}) error {
 	// make different branch depends on type of msg
 	switch msg.(type) { // interface{} . type
-	case ReqMsg:
+	case *ReqMsg:
+		// if state is nil , then put into msg chan instantly, until state is not nil
 		if node.CurrentState == nil {
-			// new a reqmsgs
-			reqMsgs := make([]*ReqMsg, len(node.MsgBuffer.ReqMsgs))
-			copy(reqMsgs, node.MsgBuffer.ReqMsgs)
-			reqMsgs = append(reqMsgs, msg.(*ReqMsg))
+			// new append a reqmsgs
+			reqMsgs := node.appendReqMsgs(msg)
 			// clear node reqMsgs pool
-			node.MsgBuffer.ReqMsgs = make([]*ReqMsg, 0)
+			node.clearMsgsBuffer(msg)
 			// into channel
 			node.MsgDelivery <- reqMsgs
 		} else {
-
+			node.MsgBuffer.ReqMsgs = append(node.MsgBuffer.ReqMsgs, msg.(*ReqMsg))
+		}
+	case *PrepreparedMsg:
+		if node.CurrentState == nil {
+			prepreparedMsgs := node.appendPrepreMsgs(msg)
+			node.clearMsgsBuffer(msg)
+			node.MsgDelivery <- prepreparedMsgs
+		} else {
+			node.MsgBuffer.PrepreparedMsgs = append(node.MsgBuffer.PrepreparedMsgs, msg.(*PrepreparedMsg))
+		}
+	case *PreparedMsg:
+		if node.CurrentState == nil || node.CurrentState.State != preprepared {
+			// if state is still nil or not in preprepared
+			node.MsgBuffer.PreparedMsgs = append(node.MsgBuffer.PreparedMsgs, msg.(*PreparedMsg))
+		} else {
+			preparedMsgs := node.appendPreMsgs(msg)
+			node.clearMsgsBuffer(msg)
+			node.MsgDelivery <- preparedMsgs
+		}
+	case *CommitedMsg:
+		if node.CurrentState == nil || node.CurrentState.State != prepared {
+			node.MsgBuffer.CommitedMsgs = append(node.MsgBuffer.CommitedMsgs, msg.(*CommitedMsg))
+		} else {
+			// commit
+			CommittedMsgs := node.appendCommitedMsgs(msg)
+			node.clearMsgsBuffer(msg)
+			node.MsgDelivery <- CommittedMsgs
 		}
 	}
+	return nil
+}
+
+func (node *Node) clearMsgsBuffer(msgs interface{}) {
+	// node.MsgBuffer.msg.(type) = make([]*msg.(type),0)
+	switch msgs.(type) {
+	case *ReqMsg:
+		node.MsgBuffer.ReqMsgs = make([]*ReqMsg, 0)
+	case *PrepreparedMsg:
+		node.MsgBuffer.PrepreparedMsgs = make([]*PrepreparedMsg, 0)
+	case *PreparedMsg:
+		node.MsgBuffer.PreparedMsgs = make([]*PreparedMsg, 0)
+	case *CommitedMsg:
+		node.MsgBuffer.CommitedMsgs = make([]*CommitedMsg, 0)
+	case *ReplyMsg:
+		node.MsgBuffer.ReplyMsgs = make([]*ReplyMsg, 0)
+	}
+}
+
+func (node *Node) appendReqMsgs(msg interface{}) []*ReqMsg {
+	reqMsgs := make([]*ReqMsg, len(node.MsgBuffer.ReqMsgs))
+	copy(reqMsgs, node.MsgBuffer.ReqMsgs)
+	reqMsgs = append(reqMsgs, msg.(*ReqMsg))
+	return reqMsgs
+}
+
+func (node *Node) appendPrepreMsgs(msg interface{}) []*PrepreparedMsg {
+	PrepreparedMsgs := make([]*PrepreparedMsg, len(node.MsgBuffer.ReqMsgs))
+	copy(PrepreparedMsgs, node.MsgBuffer.PrepreparedMsgs)
+	PrepreparedMsgs = append(PrepreparedMsgs, msg.(*PrepreparedMsg))
+	return PrepreparedMsgs
+}
+
+func (node *Node) appendPreMsgs(msg interface{}) []*PreparedMsg {
+	PreparedMsgs := make([]*PreparedMsg, len(node.MsgBuffer.ReqMsgs))
+	copy(PreparedMsgs, node.MsgBuffer.PreparedMsgs)
+	PreparedMsgs = append(PreparedMsgs, msg.(*PreparedMsg))
+	return PreparedMsgs
+}
+
+func (node *Node) appendCommitedMsgs(msg interface{}) []*CommitedMsg {
+	CommitedMsgs := make([]*CommitedMsg, len(node.MsgBuffer.ReqMsgs))
+	copy(CommitedMsgs, node.MsgBuffer.CommitedMsgs)
+	CommitedMsgs = append(CommitedMsgs, msg.(*CommitedMsg))
+	return CommitedMsgs
 }
