@@ -11,6 +11,7 @@ type PrepreparedMsg struct {
 	ViewId     int64   `json:"viewID"`
 	SequenceId int64   `json:"sequenceID"`
 	Digest     string  `json:"digest"`
+	NodeId     string  `json:"NodeId"`
 	RequestMsg *ReqMsg `json:"requestMsg"`
 }
 
@@ -18,14 +19,14 @@ type PreparedMsg struct {
 	ViewId     int64  `json:"viewID"`
 	SequenceId int64  `json:"sequenceID"`
 	Digest     string `json:"digest"`
-	NodeId     string `json:"requestMsg"`
+	NodeId     string `json:"NodeId"`
 }
 
 type CommitedMsg struct {
 	ViewId     int64  `json:"viewID"`
 	SequenceId int64  `json:"sequenceID"`
 	Digest     string `json:"digest"`
-	NodeId     string `json:"requestMsg"`
+	NodeId     string `json:"NodeId"`
 }
 
 // a consensus round is complete over return to client

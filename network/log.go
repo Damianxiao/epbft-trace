@@ -20,3 +20,12 @@ func LogMsg(msg interface{}) {
 		fmt.Printf("[Commit] NodeId: %s", CommitedMsg.NodeId)
 	}
 }
+
+// print the state
+func LogStage(stage string, isDone bool) {
+	if isDone {
+		fmt.Printf("[STAGE-DONE] %s\n", stage)
+	} else {
+		fmt.Printf("[STAGE-BEGIN] %s\n", stage)
+	}
+}
